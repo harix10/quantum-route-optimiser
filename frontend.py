@@ -77,9 +77,10 @@ def render_sidebar():
             col1, col2 = st.columns(2)
             mileage = col1.number_input("Km/L", value=12.0)
             fuel_price = col2.number_input("Fuel ₹", value=96.0)
+            fleet_size = st.slider("🚛 Fleet Size (Vehicles)", 1, 4, 1)
 
         go_btn = st.button("🚀 RUN QUANTUM ROUTER", type="primary", use_container_width=True)
-        return start_loc, is_round_trip, mileage, fuel_price, go_btn
+        return start_loc, is_round_trip, mileage, fuel_price, fleet_size, go_btn
 
 def render_dashboard():
     """Renders the Map and Metrics."""
@@ -89,7 +90,7 @@ def render_dashboard():
         
         trip_type = "(Round Trip)" if st.session_state.is_round_trip_active else "(One-Way)"
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric(f"Dist. {trip_type}", f"{m['dist']:.1f} km")
+        c1.metric(f"Total Dist.", f"{m['dist']:.1f} km")
         c2.metric("Time", f"{int(m['time']//60)}h {int(m['time']%60)}m")
         c3.metric("Fuel", f"{m['fuel']:.1f} L")
         c4.metric("Cost", f"₹ {m['cost']:,.0f}")
@@ -103,33 +104,29 @@ def render_dashboard():
         ne = [max(p[0] for p in d['coords']), max(p[1] for p in d['coords'])]
         map_obj.fit_bounds([sw, ne])
         
-        # 1. Draw Main Route (Blue Solid)
-        main_line = folium.PolyLine(
-            d['geo'], 
-            color="#00e5ff", 
-            weight=4, 
-            opacity=0.8,
-            tooltip="Main Route"
-        ).add_to(map_obj)
+        # Colors for different vehicles
+        colors = ["#00e5ff", "#ff9100", "#d500f9", "#00e676"] # Blue, Orange, Purple, Green
         
-        # Add Directional Arrows to Blue Line
-        plugins.PolyLineTextPath(
-            main_line,
-            "      ➤      ",
-            repeat=True,
-            offset=6,
-            attributes={'fill': '#00e5ff', 'font-weight': 'bold', 'font-size': '20'}
-        ).add_to(map_obj)
-        
-        # 2. Draw Return Leg (Red Dotted)
-        if 'return_geo' in d and d['return_geo']:
-            folium.PolyLine(
-                d['return_geo'], 
-                color="#ff2b2b", 
+        # 1. Draw Each Vehicle's Route
+        for idx, route_geo in enumerate(d['routes_geo']):
+            color = colors[idx % len(colors)]
+            
+            # Main Path
+            line = folium.PolyLine(
+                route_geo, 
+                color=color, 
                 weight=4, 
                 opacity=0.8,
-                dash_array='10, 10',  
-                tooltip="Return to Base"
+                tooltip=f"Vehicle {idx+1}"
+            ).add_to(map_obj)
+            
+            # Arrows
+            plugins.PolyLineTextPath(
+                line,
+                "      ➤      ",
+                repeat=True,
+                offset=6,
+                attributes={'fill': color, 'font-weight': 'bold', 'font-size': '18'}
             ).add_to(map_obj)
         
         # 3. Add Custom CSS Legend to Top-Right
@@ -147,8 +144,8 @@ def render_dashboard():
                 backdrop-filter: blur(4px);
                 ">
                 <b>&nbsp; Route Legend</b><br>
-                &nbsp; <i style="background:#00e5ff; width:25px; height:4px; display:inline-block;"></i>&nbsp; Delivery<br>
-                &nbsp; <i style="background: repeating-linear-gradient(90deg, #ff2b2b, #ff2b2b 5px, transparent 5px, transparent 10px); width:25px; height:4px; display:inline-block;"></i>&nbsp; Return
+                &nbsp; <i style="background:#00e5ff; width:25px; height:4px; display:inline-block;"></i>&nbsp; Vehicle 1<br>
+                &nbsp; <i style="background:#ff9100; width:25px; height:4px; display:inline-block;"></i>&nbsp; Vehicle 2
             </div>
             '''
         map_obj.get_root().html.add_child(folium.Element(legend_html))
@@ -159,12 +156,8 @@ def render_dashboard():
                 icon = folium.Icon(color="green", icon="play")
                 popup = "START: Warehouse"
             elif i == len(d['names']) - 1:
-                if st.session_state.is_round_trip_active:
-                    icon = folium.Icon(color="green", icon="home") 
-                    popup = "END: Returned to Base"
-                else:
-                    icon = folium.Icon(color="red", icon="flag")
-                    popup = "END: Final Destination"
+                icon = folium.Icon(color="red", icon="flag")
+                popup = "Last Stop"
             else:
                 icon = plugins.BeautifyIcon(
                     number=i,
@@ -175,10 +168,7 @@ def render_dashboard():
                 )
                 popup = f"Stop {i}"
             
-            if i == len(d['names']) - 1 and st.session_state.is_round_trip_active:
-                pass 
-            else:
-                folium.Marker(loc, tooltip=popup, popup=name, icon=icon).add_to(map_obj)
+            folium.Marker(loc, tooltip=popup, popup=name, icon=icon).add_to(map_obj)
             
         st_folium(map_obj, width="100%", height=500)
         

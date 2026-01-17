@@ -16,7 +16,7 @@ if not st.session_state.optimized_route:
     st.info("👈 Please configure your stops in the sidebar and click RUN to start.")
 
 # 2. Render Sidebar Inputs
-start_loc, is_round_trip, mileage, fuel_price, go_btn = frontend.render_sidebar()
+start_loc, is_round_trip, mileage, fuel_price, fleet_size, go_btn = frontend.render_sidebar()
 
 # 3. Main Application Logic
 if go_btn:
@@ -32,47 +32,32 @@ if go_btn:
             # --- CALL QUANTUM SOLVER ---
             # Logic returns the full ordered list. 
             # If round_trip=True, the last node in sorted_nodes is the Start Node.
-            sorted_nodes, stats = logic.optimize_route_algo(
+            routes_list, stats = logic.optimize_route_algo(
                 start_loc, 
                 st.session_state.stops_data, 
-                round_trip=is_round_trip
+                round_trip=is_round_trip,
+                fleet_size=fleet_size
             )
             
             # --- SPLIT PATH PROCESSING ---
             total_km = 0
             total_min = 0
-            main_geo = []
-            return_geo = []
+            all_routes_geo = []
+            all_names = []
+            all_coords = []
             
-            if is_round_trip:
-                # Slice list: Main Trip = Start -> Last Stop
-                # Return Trip = Last Stop -> Start
+            for route_nodes in routes_list:
+                # Get Geometry for this specific vehicle route
+                coords_seq = [n['coords'] for n in route_nodes]
+                path_geo, km, mins = api.get_road_path(coords_seq)
                 
-                # Everything up to the last stop (exclude the appended start node)
-                main_segment = sorted_nodes[:-1] 
+                total_km += km
+                total_min += mins
+                all_routes_geo.append(path_geo if path_geo else coords_seq)
                 
-                # The return leg (Last Stop -> Appended Start Node)
-                return_segment = [sorted_nodes[-2], sorted_nodes[-1]]
-                
-                # 1. Get Main Path (Blue)
-                coords_main = [n['coords'] for n in main_segment]
-                path_geo_main, km1, min1 = api.get_road_path(coords_main)
-                
-                # 2. Get Return Path (Red)
-                coords_return = [n['coords'] for n in return_segment]
-                path_geo_return, km2, min2 = api.get_road_path(coords_return)
-                
-                total_km = km1 + km2
-                total_min = min1 + min2
-                main_geo = path_geo_main if path_geo_main else coords_main
-                return_geo = path_geo_return if path_geo_return else coords_return
-                
-            else:
-                # Standard One-Way Trip
-                coords_seq = [n['coords'] for n in sorted_nodes]
-                path_geo, total_km, total_min = api.get_road_path(coords_seq)
-                main_geo = path_geo if path_geo else coords_seq
-                return_geo = None # No return leg
+                # Flatten names/coords for markers
+                all_names.extend([n['name'] for n in route_nodes])
+                all_coords.extend([n['coords'] for n in route_nodes])
             
             # --- CALCULATE LOGISTICS METRICS ---
             total_fuel = total_km / mileage
@@ -88,10 +73,9 @@ if go_btn:
             
             # Store split geometries so Frontend can color them differently
             st.session_state.optimized_route = {
-                "names": [n['name'] for n in sorted_nodes],
-                "coords": [n['coords'] for n in sorted_nodes],
-                "geo": main_geo,         # Blue Path
-                "return_geo": return_geo # Red Dotted Path
+                "names": all_names,
+                "coords": all_coords,
+                "routes_geo": all_routes_geo # List of geometries
             }
             
             # Store Quantum Analytics

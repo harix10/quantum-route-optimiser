@@ -140,21 +140,30 @@ def simulated_quantum_annealing(nodes):
 # 3. HYBRID DISPATCHER (Clustering + Nearest-Neighbor)
 # ======================================================
 
-def solve_hybrid_quantum(start_node, stops_data):
+def solve_hybrid_quantum(start_node, stops_data, n_vehicles=1):
     """
     Hybrid Solver.
     Combines K-Means clustering with Quantum-Inspired sequencing.
+    Returns: List of Routes (each route is a list of nodes), Stats
     """
     all_nodes = [start_node] + stops_data
     n = len(all_nodes)
     
-    # Small datasets don't need clustering
-    if n < 10: 
-        return simulated_quantum_annealing(all_nodes)
+    # If 1 vehicle and small dataset, simple anneal
+    if n_vehicles == 1 and n < 10: 
+        r, s = simulated_quantum_annealing(all_nodes)
+        return [r], s
     
     # --- STEP 1: Clustering (Classical ML) ---
     coords = [[s['coords'][0], s['coords'][1]] for s in stops_data]
-    k = max(1, n // 5) 
+    
+    # If Multi-Vehicle, k = fleet_size. Else dynamic k.
+    k = n_vehicles if n_vehicles > 1 else max(1, n // 5)
+    
+    # Handle edge case where stops < vehicles
+    if len(stops_data) < k:
+        k = len(stops_data)
+        
     kmeans = KMeans(n_clusters=k, random_state=42, n_init=10).fit(coords)
     
     clusters = {i: [] for i in range(k)}
@@ -169,12 +178,26 @@ def solve_hybrid_quantum(start_node, stops_data):
         lons = [p['coords'][1] for p in points]
         cluster_centroids[label] = (sum(lats)/len(lats), sum(lons)/len(lons))
 
+    combined_stats = {"history": [], "tunnels": 0, "final_temp": 0}
+
+    # --- CASE A: MULTI-VEHICLE (Independent Loops) ---
+    if n_vehicles > 1:
+        routes = []
+        for label, sub_stops in clusters.items():
+            if not sub_stops: continue
+            # Each vehicle starts at Hub, visits cluster, returns to Hub (handled in main or here)
+            # We just optimize [Hub] + [Cluster Nodes]
+            node_subset = [start_node] + sub_stops
+            optimized_sub, stats = simulated_quantum_annealing(node_subset)
+            routes.append(optimized_sub)
+            combined_stats["tunnels"] += stats["tunnels"]
+            combined_stats["history"].extend(stats["history"])
+        return routes, combined_stats
+
     # --- STEP 2: Intelligent Cluster Dispatching ---
     # We navigate from cluster to cluster based on proximity
     final_route = [start_node]
     remaining_clusters = list(cluster_centroids.keys())
-    
-    combined_stats = {"history": [], "tunnels": 0, "final_temp": 0}
     
 
     while remaining_clusters:
@@ -199,4 +222,4 @@ def solve_hybrid_quantum(start_node, stops_data):
         combined_stats["tunnels"] += stats["tunnels"]
         remaining_clusters.remove(nearest_cluster_idx)
         
-    return final_route, combined_stats
+    return [final_route], combined_stats
